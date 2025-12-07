@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, ReactNode } from "react";
 import { fetch } from "@tauri-apps/plugin-http";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -18,6 +18,58 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import {
+  PushpinOutlined,
+  PushpinFilled,
+  SyncOutlined,
+  SettingOutlined,
+  PoweroffOutlined,
+  PlusOutlined,
+  CloseOutlined,
+  CheckOutlined,
+  SortAscendingOutlined,
+  SortDescendingOutlined,
+  SwapOutlined,
+  BarsOutlined,
+} from "@ant-design/icons";
+
+// 自定义 Tooltip 组件
+function Tooltip({ children, text }: { children: ReactNode; text: string }) {
+  const [show, setShow] = useState(false);
+  const [position, setPosition] = useState({ x: 0, y: 0 });
+  const timeoutRef = useRef<number | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const handleMouseEnter = (e: React.MouseEvent) => {
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    setPosition({ x: rect.left + rect.width / 2, y: rect.bottom + 4 });
+    timeoutRef.current = window.setTimeout(() => setShow(true), 200);
+  };
+
+  const handleMouseLeave = () => {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    setShow(false);
+  };
+
+  return (
+    <div
+      ref={containerRef}
+      className="tooltip-container"
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+    >
+      {children}
+      {show && (
+        <div
+          className="tooltip"
+          style={{ left: position.x, top: position.y }}
+        >
+          {text}
+        </div>
+      )}
+    </div>
+  );
+}
 
 interface Stock {
   code: string;
@@ -347,16 +399,17 @@ function SortableStockItem({
           {formatPercent(stock.changePercent)}
         </span>
       </div>
-      <button
-        className="stock-delete-btn"
-        onClick={(e) => {
-          e.stopPropagation();
-          onDelete(stock.market, stock.code);
-        }}
-        title="删除"
-      >
-        ×
-      </button>
+      <Tooltip text="删除">
+        <button
+          className="stock-delete-btn"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete(stock.market, stock.code);
+          }}
+        >
+          <CloseOutlined />
+        </button>
+      </Tooltip>
     </div>
   );
 }
@@ -625,9 +678,9 @@ export function StockPanel() {
 
   // 获取排序图标
   const getSortIcon = () => {
-    if (sortOrder === "desc") return "↓";
-    if (sortOrder === "asc") return "↑";
-    return "⇅";
+    if (sortOrder === "desc") return <SortDescendingOutlined />;
+    if (sortOrder === "asc") return <SortAscendingOutlined />;
+    return <SwapOutlined />;
   };
 
   // 切换置顶状态
@@ -753,32 +806,35 @@ export function StockPanel() {
       <div className="stock-panel-header">
         <span className="stock-panel-title">自选股</span>
         <div className="stock-panel-actions">
-          <button
-            className={`pin-btn ${isPinned ? "pinned" : ""}`}
-            style={{ fontSize: '8px' }}
-            onClick={togglePin}
-            title={isPinned ? "取消置顶 (⌥M关闭)" : "置顶面板"}
-          >
-            📌
-          </button>
-          <button
-            className={`name-btn ${showName ? "active" : ""}`}
-            onClick={() => setShowName(!showName)}
-            style={{fontSize: '12px'}}
-            title={showName ? "隐藏股票名称" : "显示股票名称"}
-          >
-            N
-          </button>
-          <button className="sort-btn" onClick={toggleSort} title="按涨跌幅排序">
-            {getSortIcon()}
-          </button>
-          <button
-            className={`refresh-btn ${autoRefresh ? "active" : ""}`}
-            onClick={() => setAutoRefresh(!autoRefresh)}
-            title={autoRefresh ? "关闭自动刷新" : "开启自动刷新"}
-          >
-            ⟳
-          </button>
+          <Tooltip text={isPinned ? "取消置顶" : "置顶面板"}>
+            <button
+              className={`pin-btn ${isPinned ? "pinned" : ""}`}
+              onClick={togglePin}
+            >
+              {isPinned ? <PushpinFilled /> : <PushpinOutlined />}
+            </button>
+          </Tooltip>
+          <Tooltip text={showName ? "隐藏名称" : "显示名称"}>
+            <button
+              className={`name-btn ${showName ? "active" : ""}`}
+              onClick={() => setShowName(!showName)}
+            >
+              <BarsOutlined />
+            </button>
+          </Tooltip>
+          <Tooltip text="按涨跌幅排序">
+            <button className="sort-btn" onClick={toggleSort}>
+              {getSortIcon()}
+            </button>
+          </Tooltip>
+          <Tooltip text={autoRefresh ? "关闭自动刷新" : "开启自动刷新"}>
+            <button
+              className={`refresh-btn ${autoRefresh ? "active" : ""}`}
+              onClick={() => setAutoRefresh(!autoRefresh)}
+            >
+              <SyncOutlined />
+            </button>
+          </Tooltip>
           <span className="stock-panel-time">{formatTime(updateTime)}</span>
         </div>
       </div>
@@ -797,14 +853,15 @@ export function StockPanel() {
               if (e.key === "Enter") handleAddByCode();
             }}
           />
-          <button
-            className="search-add-btn"
-            onClick={handleAddByCode}
-            disabled={!/^\d{6}$/.test(searchQuery.trim())}
-            title="添加股票"
-          >
-            +
-          </button>
+          <Tooltip text="添加股票">
+            <button
+              className="search-add-btn"
+              onClick={handleAddByCode}
+              disabled={!/^\d{6}$/.test(searchQuery.trim())}
+            >
+              <PlusOutlined />
+            </button>
+          </Tooltip>
         </div>
 
         {/* 搜索结果下拉 */}
@@ -867,7 +924,7 @@ export function StockPanel() {
       </div>
       <div className="divider" />
       <div className="menu-item" onClick={() => setShowSettings(!showSettings)}>
-        <span className="menu-item-icon" style={{ fontSize: '18px' }}>⚙</span>
+        <span className="menu-item-icon"><SettingOutlined /></span>
         <span>设置</span>
         <span className="menu-item-arrow">{showSettings ? "▼" : "▶"}</span>
       </div>
@@ -893,10 +950,10 @@ export function StockPanel() {
                   onClick={saveShortcut}
                   disabled={!recordedKeys}
                 >
-                  ✓
+                  <CheckOutlined />
                 </button>
                 <button className="shortcut-btn cancel" onClick={cancelRecording}>
-                  ✕
+                  <CloseOutlined />
                 </button>
               </div>
             ) : (
@@ -910,7 +967,7 @@ export function StockPanel() {
       )}
 
       <div className="menu-item">
-        <span className="menu-item-icon">⏻</span>
+        <span className="menu-item-icon"><PoweroffOutlined /></span>
         <span>退出</span>
       </div>
     </div>

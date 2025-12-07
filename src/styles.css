@@ -70,8 +70,7 @@ body {
 .name-btn {
   background: none;
   border: none;
-  font-size: 10px;
-  font-weight: 600;
+  font-size: 12px;
   cursor: pointer;
   padding: 2px 4px;
   border-radius: 3px;
@@ -91,32 +90,30 @@ body {
 .pin-btn {
   background: none;
   border: none;
-  font-size: 10px;
+  font-size: 12px;
   cursor: pointer;
   padding: 2px 4px;
   border-radius: 3px;
   transition: all 0.1s;
-  opacity: 0.4;
-  filter: grayscale(100%);
+  color: rgba(255, 255, 255, 0.4);
 }
 
 .pin-btn:hover {
-  opacity: 0.7;
+  color: rgba(255, 255, 255, 0.7);
   background: rgba(255, 255, 255, 0.1);
 }
 
 .pin-btn.pinned {
-  opacity: 1;
-  filter: grayscale(0%);
+  color: rgba(59, 130, 246, 1);
 }
 
 .sort-btn {
   background: none;
   border: none;
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(255, 255, 255, 0.4);
   font-size: 12px;
   cursor: pointer;
-  padding: 2px 0px;
+  padding: 2px 4px;
   border-radius: 3px;
   transition: all 0.1s;
 }
@@ -130,9 +127,9 @@ body {
   background: none;
   border: none;
   color: rgba(255, 255, 255, 0.4);
-  font-size: 20px;
+  font-size: 12px;
   cursor: pointer;
-  padding-bottom: 2px;
+  padding: 2px 4px;
   border-radius: 3px;
   transition: all 0.1s;
 }
@@ -174,14 +171,12 @@ body {
 
 .stock-item {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 6px 12px;
+  padding: 6px 8px;
   margin: 0 4px;
   border-radius: 4px;
   cursor: default;
   transition: background 0.1s;
-  position: relative;
 }
 
 .stock-item:hover {
@@ -208,18 +203,19 @@ body {
 
 /* 删除按钮 */
 .stock-delete-btn {
-  position: absolute;
-  right: 4px;
-  top: 50%;
-  transform: translateY(-50%);
   background: none;
   border: none;
   color: rgba(255, 255, 255, 0.3);
-  font-size: 16px;
+  font-size: 10px;
   cursor: pointer;
-  padding: 0 4px;
+  padding: 0;
   opacity: 0;
   transition: all 0.1s;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .stock-item:hover .stock-delete-btn {
@@ -254,6 +250,7 @@ body {
   align-items: center;
   justify-content: center;
   min-width: 50px;
+  margin-left: auto;
 }
 
 .mini-trend-chart {
@@ -269,7 +266,6 @@ body {
   display: flex;
   flex-direction: column;
   gap: 1px;
-  margin-right: 20px;
 }
 
 .stock-price {
@@ -573,4 +569,25 @@ body {
 
 .shortcut-btn.cancel:hover {
   background: rgba(255, 69, 58, 1);
+}
+
+/* Tooltip */
+.tooltip-container {
+  display: inline-flex;
+  position: relative;
+  margin-left: 8px;
+}
+
+.tooltip {
+  position: fixed;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.85);
+  color: #fff;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  white-space: nowrap;
+  z-index: 9999;
+  pointer-events: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }

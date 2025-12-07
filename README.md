@@ -28,6 +28,16 @@
 
 - `⌥M` (Option + M) - 显示/隐藏面板（可自定义）
 
+## macOS 用户须知
+
+由于应用未经 Apple 签名，首次打开时可能会提示"已损坏"或"无法打开"。请在终端执行：
+
+```bash
+xattr -cr /Applications/Millionaire.app
+```
+
+如果快捷键无法使用，需要在「系统设置 → 隐私与安全性 → 辅助功能」中添加 Millionaire 并授权。
+
 ## 开发
 
 ### 环境要求

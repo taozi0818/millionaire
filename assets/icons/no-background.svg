@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="lineGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#00d4aa"/>
+      <stop offset="100%" style="stop-color:#00f5c4"/>
+    </linearGradient>
+    <linearGradient id="barGradient1" x1="0%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" style="stop-color:#00d4aa;stop-opacity:0.4"/>
+      <stop offset="100%" style="stop-color:#00f5c4;stop-opacity:0.9"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 柱状图 -->
+  <g fill="url(#barGradient1)">
+    <rect x="95" y="310" width="40" height="80" rx="4"/>
+    <rect x="155" y="250" width="40" height="140" rx="4"/>
+    <rect x="215" y="290" width="40" height="100" rx="4"/>
+    <rect x="275" y="240" width="40" height="150" rx="4"/>
+    <rect x="335" y="180" width="40" height="210" rx="4"/>
+    <rect x="395" y="130" width="40" height="260" rx="4"/>
+  </g>
+
+  <!-- 趋势线 -->
+  <polyline
+    points="115,270 175,210 235,250 295,200 355,140 395,100"
+    fill="none"
+    stroke="url(#lineGradient)"
+    stroke-width="8"
+    stroke-linecap="round"
+    stroke-linejoin="round"/>
+
+  <!-- 实心三角形箭头 -->
+  <polygon
+    points="425,70 385,90 405,110"
+    fill="#00f5c4"/>
+
+  <!-- 数据点 -->
+  <g fill="#00f5c4">
+    <circle cx="115" cy="270" r="10"/>
+    <circle cx="175" cy="210" r="10"/>
+    <circle cx="235" cy="250" r="10"/>
+    <circle cx="295" cy="200" r="10"/>
+    <circle cx="355" cy="140" r="10"/>
+  </g>
+</svg>

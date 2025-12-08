@@ -34,7 +34,7 @@ import {
 } from "@ant-design/icons";
 
 // 自定义 Tooltip 组件
-function Tooltip({ children, text }: { children: ReactNode; text: string }) {
+function Tooltip({ children, text }: { children: ReactNode; text: string; }) {
   const [show, setShow] = useState(false);
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const timeoutRef = useRef<number | null>(null);
@@ -281,6 +281,32 @@ async function fetchTrendData(market: string, code: string): Promise<number[]> {
   }
 }
 
+// 并发控制函数
+async function asyncPool<T, R>(
+  poolLimit: number,
+  array: T[],
+  iteratorFn: (item: T) => Promise<R>
+): Promise<R[]> {
+  const ret: Promise<R>[] = [];
+  const executing: Promise<void>[] = [];
+
+  for (const item of array) {
+    const p = Promise.resolve().then(() => iteratorFn(item));
+    ret.push(p);
+
+    if (poolLimit <= array.length) {
+      const e: Promise<void> = p.then(() => {
+        executing.splice(executing.indexOf(e), 1);
+      });
+      executing.push(e);
+      if (executing.length >= poolLimit) {
+        await Promise.race(executing);
+      }
+    }
+  }
+  return Promise.all(ret);
+}
+
 // 迷你走势图组件
 function MiniTrendChart({ data, isUp }: { data: number[]; isUp: boolean; }) {
   if (!data || data.length < 2) return null;
@@ -455,6 +481,13 @@ export function StockPanel() {
   // 自动刷新开关
   const [autoRefresh, setAutoRefresh] = useState(true);
 
+  // 刷新间隔(秒)，默认 10s，最小 10s
+  const [refreshInterval, setRefreshInterval] = useState(() => {
+    const saved = localStorage.getItem("millionaire_refresh_interval");
+    const parsed = parseInt(saved || "", 10);
+    return (!isNaN(parsed) && parsed >= 10) ? parsed : 10;
+  });
+
   // 设置面板
   const [showSettings, setShowSettings] = useState(false);
   const [shortcutDisplay, setShortcutDisplay] = useState("⌥M");
@@ -488,9 +521,9 @@ export function StockPanel() {
       if (autoRefresh && isTradingTime()) {
         refreshData();
       }
-    }, 5000);
+    }, refreshInterval * 1000);
     return () => clearInterval(timer);
-  }, [refreshData, autoRefresh]);
+  }, [refreshData, autoRefresh, refreshInterval]);
 
   // 保存股票配置到本地存储，并立即刷新数据
   useEffect(() => {
@@ -498,6 +531,11 @@ export function StockPanel() {
     // 当 stockConfigs 变化时立即刷新数据
     refreshData();
   }, [stockConfigs, refreshData]);
+
+  // 保存刷新间隔配置
+  useEffect(() => {
+    localStorage.setItem("millionaire_refresh_interval", refreshInterval.toString());
+  }, [refreshInterval]);
 
   // 获取分时数据 - 仅在添加新股票时获取新数据
   const prevConfigsRef = useRef<StockConfig[]>([]);
@@ -509,12 +547,10 @@ export function StockPanel() {
 
     // 只获取新添加的股票分时数据
     if (newConfigs.length > 0) {
-      Promise.all(
-        newConfigs.map(async (config) => {
-          const trend = await fetchTrendData(config.market, config.code);
-          return { key: `${config.market}.${config.code}`, trend };
-        })
-      ).then(results => {
+      asyncPool(15, newConfigs, async (config) => {
+        const trend = await fetchTrendData(config.market, config.code);
+        return { key: `${config.market}.${config.code}`, trend };
+      }).then(results => {
         setTrendData(current => {
           const updated = { ...current };
           results.forEach(({ key, trend }) => {
@@ -534,14 +570,12 @@ export function StockPanel() {
     const fetchAllTrends = async () => {
       const configs = stockConfigsRef.current;
       const results: Record<string, number[]> = {};
-      await Promise.all(
-        configs.map(async (config) => {
-          const trend = await fetchTrendData(config.market, config.code);
-          if (trend.length > 0) {
-            results[`${config.market}.${config.code}`] = trend;
-          }
-        })
-      );
+      await asyncPool(15, configs, async (config) => {
+        const trend = await fetchTrendData(config.market, config.code);
+        if (trend.length > 0) {
+          results[`${config.market}.${config.code}`] = trend;
+        }
+      });
       setTrendData(results);
     };
 
@@ -942,37 +976,99 @@ export function StockPanel() {
 
       {/* 设置面板 */}
       {showSettings && (
-        <div className="settings-panel">
-          <div className="settings-item">
+        <div className="settings-panel" style={{ padding: "10px", background: "rgba(0,0,0,0.2)", borderRadius: "8px", marginTop: "8px" }}>
+          <div className="settings-item" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
             <span className="settings-label">快捷键</span>
-            {isRecordingShortcut ? (
-              <div className="shortcut-recording">
-                <input
-                  type="text"
-                  className="shortcut-input"
-                  placeholder="按下快捷键..."
-                  value={recordedKeys ? formatShortcutDisplay(recordedKeys.modifiers, recordedKeys.key) : ""}
-                  onKeyDown={handleShortcutKeyDown}
-                  autoFocus
-                  readOnly
-                />
-                <button
-                  className="shortcut-btn save"
-                  onClick={saveShortcut}
-                  disabled={!recordedKeys}
+            <div style={{ width: isRecordingShortcut ? "140px" : "105px", display: "flex", justifyContent: "flex-end", transition: "width 0.2s" }}>
+              {isRecordingShortcut ? (
+                <div className="shortcut-recording" style={{ display: "flex", alignItems: "center", gap: "4px", width: "100%", justifyContent: "space-between" }}>
+                  <input
+                    type="text"
+                    className="shortcut-input"
+                    placeholder="按下快捷键..."
+                    value={recordedKeys ? formatShortcutDisplay(recordedKeys.modifiers, recordedKeys.key) : ""}
+                    onKeyDown={handleShortcutKeyDown}
+                    autoFocus
+                    readOnly
+                    style={{
+                      flex: 1,
+                      padding: "4px 8px",
+                      borderRadius: "4px",
+                      border: "1px solid #444",
+                      background: "#333",
+                      color: "#fff",
+                      fontSize: "12px",
+                      textAlign: "center",
+                      outline: "none"
+                    }}
+                  />
+                  <button
+                    className="shortcut-btn save"
+                    onClick={saveShortcut}
+                    disabled={!recordedKeys}
+                    style={{ padding: "4px 8px", background: "#34c759", border: "none", borderRadius: "4px", cursor: "pointer", color: "#fff", display: "flex", alignItems: "center" }}
+                  >
+                    <CheckOutlined />
+                  </button>
+                  <button
+                    className="shortcut-btn cancel"
+                    onClick={cancelRecording}
+                    style={{ padding: "4px 8px", background: "#ff453a", border: "none", borderRadius: "4px", cursor: "pointer", color: "#fff", display: "flex", alignItems: "center" }}
+                  >
+                    <CloseOutlined />
+                  </button>
+                </div>
+              ) : (
+                <div
+                  className="shortcut-display"
+                  onClick={() => setIsRecordingShortcut(true)}
+                  style={{
+                    width: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: "8px",
+                    cursor: "pointer",
+                    padding: "4px 8px",
+                    borderRadius: "4px",
+                    background: "#333",
+                    border: "1px solid #444"
+                  }}
                 >
-                  <CheckOutlined />
-                </button>
-                <button className="shortcut-btn cancel" onClick={cancelRecording}>
-                  <CloseOutlined />
-                </button>
-              </div>
-            ) : (
-              <div className="shortcut-display" onClick={() => setIsRecordingShortcut(true)}>
-                <span className="shortcut-value">{shortcutDisplay}</span>
-                <span className="shortcut-edit">点击修改</span>
-              </div>
-            )}
+                  <span className="shortcut-value" style={{ fontFamily: "monospace", fontWeight: "bold" }}>{shortcutDisplay}</span>
+                  <span className="shortcut-edit" style={{ fontSize: "10px", color: "#888" }}>修改</span>
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="settings-item" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span className="settings-label">刷新间隔(秒)</span>
+            <div style={{ width: "105px", display: "flex", justifyContent: "flex-end" }}>
+              <input
+                type="text"
+                style={{
+                  width: "100%",
+                  padding: "4px 8px",
+                  borderRadius: "4px",
+                  border: "1px solid #444",
+                  background: "#333",
+                  color: "#fff",
+                  fontSize: "12px",
+                  textAlign: "center",
+                  outline: "none"
+                }}
+                value={refreshInterval}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (/^\d*$/.test(val)) {
+                    setRefreshInterval(val === "" ? 0 : parseInt(val, 10));
+                  }
+                }}
+                onBlur={() => {
+                  if (refreshInterval < 10) setRefreshInterval(10);
+                }}
+              />
+            </div>
           </div>
         </div>
       )}

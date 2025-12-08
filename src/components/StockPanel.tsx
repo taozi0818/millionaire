@@ -288,6 +288,7 @@ function MiniTrendChart({ data, isUp }: { data: number[]; isUp: boolean; }) {
   const width = 50;
   const height = 20;
   const padding = 1;
+  const TOTAL_POINTS = 241; // A股全天交易时间 9:30-15:00 约241个点
 
   const min = Math.min(...data);
   const max = Math.max(...data);
@@ -297,15 +298,25 @@ function MiniTrendChart({ data, isUp }: { data: number[]; isUp: boolean; }) {
   const prevClose = data[0];
   const prevCloseY = height - padding - ((prevClose - min) / range) * (height - 2 * padding);
 
-  // 采样点 (最多取30个点)
-  const step = Math.max(1, Math.floor(data.length / 30));
-  const sampled = data.filter((_, i) => i % step === 0);
+  // 采样点 (保持时间轴比例)
+  const step = Math.ceil(TOTAL_POINTS / 30);
+  const pointsArr = [];
 
-  const points = sampled.map((val, i) => {
-    const x = padding + (i / (sampled.length - 1)) * (width - 2 * padding);
-    const y = height - padding - ((val - min) / range) * (height - 2 * padding);
-    return `${x},${y}`;
-  }).join(" ");
+  for (let i = 0; i < data.length; i += step) {
+    const x = padding + (i / (TOTAL_POINTS - 1)) * (width - 2 * padding);
+    const y = height - padding - ((data[i] - min) / range) * (height - 2 * padding);
+    pointsArr.push(`${x},${y}`);
+  }
+
+  // 确保包含最新的数据点
+  if ((data.length - 1) % step !== 0) {
+    const i = data.length - 1;
+    const x = padding + (i / (TOTAL_POINTS - 1)) * (width - 2 * padding);
+    const y = height - padding - ((data[i] - min) / range) * (height - 2 * padding);
+    pointsArr.push(`${x},${y}`);
+  }
+
+  const points = pointsArr.join(" ");
 
   const color = isUp ? "#ff453a" : "#34c759";
 

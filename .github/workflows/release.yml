@@ -50,8 +50,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: v__VERSION__
-          releaseName: 'Millionaire v__VERSION__'
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Millionaire ${{ github.ref_name }}'
           releaseBody: |
             ## 下载说明
 
@@ -61,6 +61,6 @@ jobs:
             - **Linux**: `Millionaire_*.deb` 或 `.AppImage`
 
             > macOS 用户首次打开可能需要右键点击选择"打开"
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}

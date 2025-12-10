@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, ReactNode } from "react";
-import { fetch } from "@tauri-apps/plugin-http";
 import { invoke } from "@tauri-apps/api/core";
+import { load } from "@tauri-apps/plugin-store";
+import { fetch } from "@tauri-apps/plugin-http";
 import {
   DndContext,
   closestCenter,
@@ -34,7 +35,7 @@ import {
 } from "@ant-design/icons";
 
 // 自定义 Tooltip 组件
-function Tooltip({ children, text }: { children: ReactNode; text: string }) {
+function Tooltip({ children, text }: { children: ReactNode; text: string; }) {
   const [show, setShow] = useState(false);
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const timeoutRef = useRef<number | null>(null);
@@ -95,17 +96,256 @@ const DEFAULT_STOCKS: StockConfig[] = [
   { code: "300750", market: "0" }, // 宁德时代
 ];
 
-const STORAGE_KEY = "millionaire_stocks";
+const STORAGE_KEY = "stocks";
+const REFRESH_INTERVAL_KEY = "refresh_interval";
+const COOKIE_KEY = "eastmoney_cookies";
 
-// 从本地存储加载股票配置
-function loadStockConfigs(): StockConfig[] {
+// Cookie 相关类型
+interface EastMoneyCookies {
+  qgqp_b_id: string;
+  nid18?: string;
+  nid18_create_time?: number;
+  gviem?: string;
+  gviem_create_time?: number;
+  created_at: number;
+}
+
+// Store 实例 (懒加载)
+let storePromise: ReturnType<typeof load> | null = null;
+async function getStore() {
+  if (!storePromise) {
+    storePromise = load("settings.json");
+  }
+  return storePromise;
+}
+
+// 生成 qgqp_b_id (20位数字字符串，首位1-9，其余0-9)
+function generateQgqpBid(): string {
+  let id = (Math.floor(Math.random() * 9) + 1).toString();
+  for (let i = 0; i < 19; i++) {
+    id += Math.floor(Math.random() * 10).toString();
+  }
+  return id;
+}
+
+// 生成 nanoid 风格的随机字符串 (用于 gviem)
+function generateNanoid(length: number = 25): string {
+  const alphabet = "useandom-26T198340PX75pxJACKVERYMINDBUSHWOLF_GQZbfghjklqvwyzrict";
+  const bytes = new Uint8Array(length);
+  crypto.getRandomValues(bytes);
+  let id = "";
+  for (let i = length - 1; i >= 0; i--) {
+    id += alphabet[bytes[i] & 63];
+  }
+  return id;
+}
+
+// 生成简化的设备指纹 hash (32位十六进制)
+async function generateFingerprintHash(): Promise<string> {
+  const data = [
+    navigator.userAgent,
+    screen.width,
+    screen.height,
+    navigator.language,
+    Intl.DateTimeFormat().resolvedOptions().timeZone,
+    new Date().getTimezoneOffset(),
+  ].join("|");
+
+  const encoder = new TextEncoder();
+  const dataBuffer = encoder.encode(data);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", dataBuffer);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, "0")).join("").slice(0, 32);
+}
+
+// 收集设备指纹信息
+function collectDeviceFingerprint() {
+  const ua = navigator.userAgent;
+
+  // 检测操作系统
+  let os = "unknown";
+  let osVersion = "";
+  if (ua.includes("Windows")) {
+    os = "Windows";
+    const match = ua.match(/Windows NT ([\d.]+)/);
+    osVersion = match ? `Windows ${match[1]}` : "Windows";
+  } else if (ua.includes("Mac")) {
+    os = "MacOS";
+    const match = ua.match(/Mac OS X ([\d_]+)/);
+    osVersion = match ? `Mac OS X ${match[1].replace(/_/g, ".")}` : "Mac OS X";
+  } else if (ua.includes("Linux")) {
+    os = "Linux";
+    osVersion = "Linux";
+  }
+
+  return {
+    osPlatform: os,
+    sourceType: "WEB",
+    osversion: osVersion,
+    language: navigator.language || "zh-CN",
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Shanghai",
+    webDeviceInfo: {
+      screenResolution: `${screen.width}X${screen.height}`,
+      userAgent: ua,
+      canvasKey: generateNanoid(32),
+      webglKey: generateNanoid(32),
+      fontKey: generateNanoid(32),
+      audioKey: generateNanoid(32),
+    },
+  };
+}
+
+// 调用东方财富 API 获取 nid18 和 gviem
+async function fetchNidFromApi(): Promise<{ nid?: string; gvi?: string }> {
+  const fingerprint = collectDeviceFingerprint();
+
   try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      const configs = JSON.parse(saved);
-      if (Array.isArray(configs) && configs.length > 0) {
-        return configs;
+    const response = await fetch("https://anonflow2.eastmoney.com/backend/api/webreport", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json;charset=UTF-8",
+        "User-Agent": navigator.userAgent,
+        "Origin": "https://www.eastmoney.com",
+        "Referer": "https://www.eastmoney.com/",
+      },
+      body: JSON.stringify(fingerprint),
+    });
+
+    const data = await response.json();
+    console.log("[fetchNidFromApi] Response:", data);
+
+    if (data.returnCode === "0" && data.data) {
+      console.log("[fetchNidFromApi] nid:", data.data.nid, "gvi:", data.data.gvi);
+      return {
+        nid: data.data.nid,
+        gvi: data.data.gvi,
+      };
+    }
+    console.log("[fetchNidFromApi] Invalid response, returnCode:", data.returnCode);
+  } catch (e) {
+    console.error("Failed to fetch nid from API:", e);
+  }
+
+  return {};
+}
+
+// 内存缓存
+let cachedCookies: EastMoneyCookies | null = null;
+let isInitializingCookies = false;
+let cookieInitPromise: Promise<EastMoneyCookies> | null = null;
+
+// 获取或生成 Cookie
+async function getEastMoneyCookies(): Promise<EastMoneyCookies> {
+  // 如果内存中有缓存，且已经有 nid18，直接返回
+  if (cachedCookies && cachedCookies.nid18) {
+    return cachedCookies;
+  }
+
+  // 防止并发初始化
+  if (isInitializingCookies && cookieInitPromise) {
+    return cookieInitPromise;
+  }
+
+  isInitializingCookies = true;
+  cookieInitPromise = initializeCookies();
+
+  try {
+    const result = await cookieInitPromise;
+    return result;
+  } finally {
+    isInitializingCookies = false;
+    cookieInitPromise = null;
+  }
+}
+
+async function initializeCookies(): Promise<EastMoneyCookies> {
+  // 尝试从 Store 加载
+  try {
+    const store = await getStore();
+    const saved = await store.get<EastMoneyCookies>(COOKIE_KEY);
+
+    // 如果有完整的 nid18/gviem，检查是否过期（90天）
+    if (saved && saved.qgqp_b_id && saved.nid18 && saved.gviem && saved.created_at) {
+      const age = Date.now() - saved.created_at;
+      const maxAge = 90 * 24 * 60 * 60 * 1000;
+      if (age < maxAge) {
+        cachedCookies = saved;
+        console.log("[Cookie] Loaded from store with nid18:", saved.nid18);
+        return saved;
       }
+      // 过期了，需要重新获取 nid18/gviem
+    }
+  } catch (e) {
+    console.error("Failed to load cookies:", e);
+  }
+
+  // 生成新的 Cookie，从 API 获取 nid18 和 gviem
+  const qgqp_b_id = generateQgqpBid();
+  const now = Date.now();
+
+  console.log("[Cookie] Generating new cookies, fetching nid18 from API...");
+
+  // 从东方财富 API 获取 nid18 和 gviem
+  const { nid, gvi } = await fetchNidFromApi();
+
+  // 如果 API 调用失败，使用本地生成的指纹作为备选
+  const nid18 = nid || await generateFingerprintHash();
+  const gviem = gvi || generateNanoid(25);
+
+  const newCookies: EastMoneyCookies = {
+    qgqp_b_id,
+    nid18,
+    nid18_create_time: now,
+    gviem,
+    gviem_create_time: now,
+    created_at: now,
+  };
+
+  console.log("[Cookie] Generated cookies with nid18:", nid18, "from API:", !!nid);
+
+  // 缓存和保存
+  cachedCookies = newCookies;
+  try {
+    const store = await getStore();
+    await store.set(COOKIE_KEY, newCookies);
+    await store.save();
+  } catch (e) {
+    console.error("Failed to save cookies:", e);
+  }
+
+  return newCookies;
+}
+
+// 构建 Cookie 字符串
+async function buildCookieString(): Promise<string> {
+  const cookies = await getEastMoneyCookies();
+  const parts: string[] = [`qgqp_b_id=${cookies.qgqp_b_id}`];
+
+  if (cookies.nid18) {
+    parts.push(`nid18=${cookies.nid18}`);
+  }
+  if (cookies.nid18_create_time) {
+    parts.push(`nid18_create_time=${cookies.nid18_create_time}`);
+  }
+  if (cookies.gviem) {
+    parts.push(`gviem=${cookies.gviem}`);
+  }
+  if (cookies.gviem_create_time) {
+    parts.push(`gviem_create_time=${cookies.gviem_create_time}`);
+  }
+
+  const cookieStr = parts.join("; ");
+  console.log("[Cookie] Built cookie string:", cookieStr);
+  return cookieStr;
+}
+
+// 从 Store 加载股票配置
+async function loadStockConfigsAsync(): Promise<StockConfig[]> {
+  try {
+    const store = await getStore();
+    const configs = await store.get<StockConfig[]>(STORAGE_KEY);
+    if (Array.isArray(configs) && configs.length > 0) {
+      return configs;
     }
   } catch (e) {
     console.error("Failed to load stock configs:", e);
@@ -113,12 +353,39 @@ function loadStockConfigs(): StockConfig[] {
   return DEFAULT_STOCKS;
 }
 
-// 保存股票配置到本地存储
-function saveStockConfigs(configs: StockConfig[]) {
+// 保存股票配置到 Store
+async function saveStockConfigs(configs: StockConfig[]) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(configs));
+    const store = await getStore();
+    await store.set(STORAGE_KEY, configs);
+    await store.save();
   } catch (e) {
     console.error("Failed to save stock configs:", e);
+  }
+}
+
+// 从 Store 加载刷新间隔
+async function loadRefreshInterval(): Promise<number> {
+  try {
+    const store = await getStore();
+    const interval = await store.get<number>(REFRESH_INTERVAL_KEY);
+    if (typeof interval === "number" && interval >= 10) {
+      return interval;
+    }
+  } catch (e) {
+    console.error("Failed to load refresh interval:", e);
+  }
+  return 10;
+}
+
+// 保存刷新间隔到 Store
+async function saveRefreshInterval(interval: number) {
+  try {
+    const store = await getStore();
+    await store.set(REFRESH_INTERVAL_KEY, interval);
+    await store.save();
+  } catch (e) {
+    console.error("Failed to save refresh interval:", e);
   }
 }
 
@@ -161,24 +428,39 @@ async function fetchStockData(stocks: StockConfig[]): Promise<Stock[]> {
 
   const secids = buildSecids(stocks);
   const url = `https://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&secids=${secids}&fields=f12,f13,f14,f2,f3,f4`;
+  const cookie = await buildCookieString();
+
+  console.debug("[fetchStockData] URL:", url);
+  console.debug("[fetchStockData] Cookie:", cookie);
 
   try {
-    const response = await fetch(url, { method: "GET" });
-    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Referer": "https://quote.eastmoney.com/",
+        "Accept": "*/*",
+        "Cookie": cookie,
+      },
+    });
     const data = await response.json();
+    console.log("[fetchStockData] Response data:", data);
     if (!data.data?.diff) return [];
 
     return (data.data.diff as EastMoneyResponseItem[]).map((item) => ({
       code: item.f12,
       name: item.f14,
-      market: String(item.f13),  // 直接使用 API 返回的市场信息
+      market: String(item.f13),
       price: item.f2,
       change: item.f4,
       changePercent: item.f3,
     }));
   } catch (error) {
     console.error("Failed to fetch stock data:", error);
+    if (error instanceof Error) {
+      console.error("Error message:", error.message);
+      console.error("Error stack:", error.stack);
+    }
     return [];
   }
 }
@@ -192,13 +474,7 @@ async function searchStock(keyword: string): Promise<SearchResult[]> {
   console.log("[Search] URL:", url);
 
   try {
-    const response = await fetch(url, { method: "GET" });
-    console.log("[Search] Response status:", response.status);
-    if (!response.ok) {
-      console.log("[Search] Response not ok");
-      return [];
-    }
-
+    const response = await fetch(url);
     const rawText = await response.text();
     console.log("[Search] Response text:", rawText);
 
@@ -261,11 +537,18 @@ function isTradingTime(): boolean {
 async function fetchTrendData(market: string, code: string): Promise<number[]> {
   const secid = `${market}.${code}`;
   const url = `https://push2.eastmoney.com/api/qt/stock/trends2/get?secid=${secid}&fields1=f1&fields2=f51,f52,f53`;
+  const cookie = await buildCookieString();
 
   try {
-    const response = await fetch(url, { method: "GET" });
-    if (!response.ok) return [];
-
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Referer": "https://quote.eastmoney.com/",
+        "Accept": "*/*",
+        "Cookie": cookie,
+      },
+    });
     const data = await response.json();
     if (!data.data?.trends) return [];
 
@@ -279,6 +562,32 @@ async function fetchTrendData(market: string, code: string): Promise<number[]> {
     console.error("Failed to fetch trend data:", error);
     return [];
   }
+}
+
+// 并发控制函数
+async function asyncPool<T, R>(
+  poolLimit: number,
+  array: T[],
+  iteratorFn: (item: T) => Promise<R>
+): Promise<R[]> {
+  const ret: Promise<R>[] = [];
+  const executing: Promise<void>[] = [];
+
+  for (const item of array) {
+    const p = Promise.resolve().then(() => iteratorFn(item));
+    ret.push(p);
+
+    if (poolLimit <= array.length) {
+      const e: Promise<void> = p.then(() => {
+        executing.splice(executing.indexOf(e), 1);
+      });
+      executing.push(e);
+      if (executing.length >= poolLimit) {
+        await Promise.race(executing);
+      }
+    }
+  }
+  return Promise.all(ret);
 }
 
 // 迷你走势图组件
@@ -426,11 +735,12 @@ function SortableStockItem({
 }
 
 export function StockPanel() {
-  const [stockConfigs, setStockConfigs] = useState<StockConfig[]>(loadStockConfigs);
+  const [stockConfigs, setStockConfigs] = useState<StockConfig[]>(DEFAULT_STOCKS);
   const [stocks, setStocks] = useState<Stock[]>([]);
   const [updateTime, setUpdateTime] = useState(new Date());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [configsLoaded, setConfigsLoaded] = useState(false);
 
   // 搜索相关状态
   const [searchQuery, setSearchQuery] = useState("");
@@ -455,6 +765,23 @@ export function StockPanel() {
   // 自动刷新开关
   const [autoRefresh, setAutoRefresh] = useState(true);
 
+  // 刷新间隔(秒)，默认 10s，最小 10s
+  const [refreshInterval, setRefreshInterval] = useState(10);
+
+  // 初始化加载配置
+  useEffect(() => {
+    const initConfigs = async () => {
+      const [configs, interval] = await Promise.all([
+        loadStockConfigsAsync(),
+        loadRefreshInterval(),
+      ]);
+      setStockConfigs(configs);
+      setRefreshInterval(interval);
+      setConfigsLoaded(true);
+    };
+    initConfigs();
+  }, []);
+
   // 设置面板
   const [showSettings, setShowSettings] = useState(false);
   const [shortcutDisplay, setShortcutDisplay] = useState("⌥M");
@@ -467,11 +794,15 @@ export function StockPanel() {
 
   const refreshData = useCallback(async () => {
     try {
+      console.log("[refreshData] Fetching with configs:", stockConfigsRef.current);
       const data = await fetchStockData(stockConfigsRef.current);
+      console.log("[refreshData] Received data:", data);
       if (data.length > 0) {
         setStocks(data);
         setUpdateTime(new Date());
         setError(null);
+      } else {
+        console.log("[refreshData] No data received, stocks not updated");
       }
     } catch (err) {
       setError("获取数据失败");
@@ -488,16 +819,27 @@ export function StockPanel() {
       if (autoRefresh && isTradingTime()) {
         refreshData();
       }
-    }, 5000);
+    }, refreshInterval * 1000);
     return () => clearInterval(timer);
-  }, [refreshData, autoRefresh]);
+  }, [refreshData, autoRefresh, refreshInterval]);
 
-  // 保存股票配置到本地存储，并立即刷新数据
+  // 保存股票配置到 Store，并立即刷新数据
   useEffect(() => {
-    saveStockConfigs(stockConfigs);
+    console.log("[useEffect] stockConfigs changed:", stockConfigs, "configsLoaded:", configsLoaded);
+    if (configsLoaded) {
+      saveStockConfigs(stockConfigs);
+    }
     // 当 stockConfigs 变化时立即刷新数据
+    console.log("[useEffect] Calling refreshData with stockConfigsRef.current:", stockConfigsRef.current);
     refreshData();
-  }, [stockConfigs, refreshData]);
+  }, [stockConfigs, refreshData, configsLoaded]);
+
+  // 保存刷新间隔配置到 Store
+  useEffect(() => {
+    if (configsLoaded) {
+      saveRefreshInterval(refreshInterval);
+    }
+  }, [refreshInterval, configsLoaded]);
 
   // 获取分时数据 - 仅在添加新股票时获取新数据
   const prevConfigsRef = useRef<StockConfig[]>([]);
@@ -509,12 +851,10 @@ export function StockPanel() {
 
     // 只获取新添加的股票分时数据
     if (newConfigs.length > 0) {
-      Promise.all(
-        newConfigs.map(async (config) => {
-          const trend = await fetchTrendData(config.market, config.code);
-          return { key: `${config.market}.${config.code}`, trend };
-        })
-      ).then(results => {
+      asyncPool(15, newConfigs, async (config) => {
+        const trend = await fetchTrendData(config.market, config.code);
+        return { key: `${config.market}.${config.code}`, trend };
+      }).then(results => {
         setTrendData(current => {
           const updated = { ...current };
           results.forEach(({ key, trend }) => {
@@ -534,14 +874,12 @@ export function StockPanel() {
     const fetchAllTrends = async () => {
       const configs = stockConfigsRef.current;
       const results: Record<string, number[]> = {};
-      await Promise.all(
-        configs.map(async (config) => {
-          const trend = await fetchTrendData(config.market, config.code);
-          if (trend.length > 0) {
-            results[`${config.market}.${config.code}`] = trend;
-          }
-        })
-      );
+      await asyncPool(15, configs, async (config) => {
+        const trend = await fetchTrendData(config.market, config.code);
+        if (trend.length > 0) {
+          results[`${config.market}.${config.code}`] = trend;
+        }
+      });
       setTrendData(results);
     };
 
@@ -584,14 +922,21 @@ export function StockPanel() {
   }, [searchQuery]);
 
   const handleAddStock = (result: SearchResult) => {
+    console.log("[handleAddStock] Adding:", result);
+    console.log("[handleAddStock] Current stockConfigs:", stockConfigs);
     // 检查是否已存在 (使用 market + code 判断)
     if (stockConfigs.some((s) => s.market === result.market && s.code === result.code)) {
+      console.log("[handleAddStock] Already exists, skipping");
       setSearchQuery("");
       setShowSearchResults(false);
       return;
     }
 
-    setStockConfigs((prev) => [...prev, { code: result.code, market: result.market }]);
+    setStockConfigs((prev) => {
+      const newConfigs = [...prev, { code: result.code, market: result.market }];
+      console.log("[handleAddStock] New stockConfigs:", newConfigs);
+      return newConfigs;
+    });
     setSearchQuery("");
     setShowSearchResults(false);
   };
@@ -942,37 +1287,99 @@ export function StockPanel() {
 
       {/* 设置面板 */}
       {showSettings && (
-        <div className="settings-panel">
-          <div className="settings-item">
+        <div className="settings-panel" style={{ padding: "10px", background: "rgba(0,0,0,0.2)", borderRadius: "8px", marginTop: "8px" }}>
+          <div className="settings-item" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
             <span className="settings-label">快捷键</span>
-            {isRecordingShortcut ? (
-              <div className="shortcut-recording">
-                <input
-                  type="text"
-                  className="shortcut-input"
-                  placeholder="按下快捷键..."
-                  value={recordedKeys ? formatShortcutDisplay(recordedKeys.modifiers, recordedKeys.key) : ""}
-                  onKeyDown={handleShortcutKeyDown}
-                  autoFocus
-                  readOnly
-                />
-                <button
-                  className="shortcut-btn save"
-                  onClick={saveShortcut}
-                  disabled={!recordedKeys}
+            <div style={{ width: isRecordingShortcut ? "140px" : "105px", display: "flex", justifyContent: "flex-end", transition: "width 0.2s" }}>
+              {isRecordingShortcut ? (
+                <div className="shortcut-recording" style={{ display: "flex", alignItems: "center", gap: "4px", width: "100%", justifyContent: "space-between" }}>
+                  <input
+                    type="text"
+                    className="shortcut-input"
+                    placeholder="按下快捷键..."
+                    value={recordedKeys ? formatShortcutDisplay(recordedKeys.modifiers, recordedKeys.key) : ""}
+                    onKeyDown={handleShortcutKeyDown}
+                    autoFocus
+                    readOnly
+                    style={{
+                      flex: 1,
+                      padding: "4px 8px",
+                      borderRadius: "4px",
+                      border: "1px solid #444",
+                      background: "#333",
+                      color: "#fff",
+                      fontSize: "12px",
+                      textAlign: "center",
+                      outline: "none"
+                    }}
+                  />
+                  <button
+                    className="shortcut-btn save"
+                    onClick={saveShortcut}
+                    disabled={!recordedKeys}
+                    style={{ padding: "4px 8px", background: "#34c759", border: "none", borderRadius: "4px", cursor: "pointer", color: "#fff", display: "flex", alignItems: "center" }}
+                  >
+                    <CheckOutlined />
+                  </button>
+                  <button
+                    className="shortcut-btn cancel"
+                    onClick={cancelRecording}
+                    style={{ padding: "4px 8px", background: "#ff453a", border: "none", borderRadius: "4px", cursor: "pointer", color: "#fff", display: "flex", alignItems: "center" }}
+                  >
+                    <CloseOutlined />
+                  </button>
+                </div>
+              ) : (
+                <div
+                  className="shortcut-display"
+                  onClick={() => setIsRecordingShortcut(true)}
+                  style={{
+                    width: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: "8px",
+                    cursor: "pointer",
+                    padding: "4px 8px",
+                    borderRadius: "4px",
+                    background: "#333",
+                    border: "1px solid #444"
+                  }}
                 >
-                  <CheckOutlined />
-                </button>
-                <button className="shortcut-btn cancel" onClick={cancelRecording}>
-                  <CloseOutlined />
-                </button>
-              </div>
-            ) : (
-              <div className="shortcut-display" onClick={() => setIsRecordingShortcut(true)}>
-                <span className="shortcut-value">{shortcutDisplay}</span>
-                <span className="shortcut-edit">点击修改</span>
-              </div>
-            )}
+                  <span className="shortcut-value" style={{ fontFamily: "monospace", fontWeight: "bold" }}>{shortcutDisplay}</span>
+                  <span className="shortcut-edit" style={{ fontSize: "10px", color: "#888" }}>修改</span>
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="settings-item" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span className="settings-label">刷新间隔(秒)</span>
+            <div style={{ width: "105px", display: "flex", justifyContent: "flex-end" }}>
+              <input
+                type="text"
+                style={{
+                  width: "100%",
+                  padding: "4px 8px",
+                  borderRadius: "4px",
+                  border: "1px solid #444",
+                  background: "#333",
+                  color: "#fff",
+                  fontSize: "12px",
+                  textAlign: "center",
+                  outline: "none"
+                }}
+                value={refreshInterval}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (/^\d*$/.test(val)) {
+                    setRefreshInterval(val === "" ? 0 : parseInt(val, 10));
+                  }
+                }}
+                onBlur={() => {
+                  if (refreshInterval < 10) setRefreshInterval(10);
+                }}
+              />
+            </div>
           </div>
         </div>
       )}

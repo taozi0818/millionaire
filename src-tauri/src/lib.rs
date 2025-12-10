@@ -303,6 +303,7 @@ fn create_window(app: &tauri::AppHandle, config: &AppConfig) -> tauri::Result<()
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_http::init())
+        .plugin(tauri_plugin_store::Builder::default().build())
         .invoke_handler(tauri::generate_handler![set_pinned, get_pinned, update_shortcut, get_shortcut, save_window_size])
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()

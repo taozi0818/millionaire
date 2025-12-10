@@ -72,10 +72,53 @@ npm run tauri build
 
 ## 配置文件
 
-配置文件位于 `~/Library/Application Support/com.millionaire.stock/config.json`，包含：
+应用配置存储在以下位置：
 
-- 快捷键设置
-- 窗口尺寸
+- **macOS**: `~/Library/Application Support/com.millionaire.stock/`
+- **Windows**: `%APPDATA%/com.millionaire.stock/`
+- **Linux**: `~/.config/com.millionaire.stock/`
+
+### config.json
+
+快捷键和窗口配置：
+
+```json
+{
+  "shortcut": {
+    "modifiers": ["Alt"],
+    "key": "M"
+  },
+  "window_size": {
+    "width": 280,
+    "height": 500
+  }
+}
+```
+
+### settings.json
+
+自选股列表和刷新设置：
+
+```json
+{
+  "stocks": [
+    { "code": "000001", "market": "1" },
+    { "code": "399001", "market": "0" },
+    { "code": "600519", "market": "1" }
+  ],
+  "refresh_interval": 10
+}
+```
+
+**字段说明**：
+- `stocks`: 自选股列表
+  - `code`: 股票代码（6位数字）
+  - `market`: 市场代码，`"1"` = 上海，`"0"` = 深圳
+- `refresh_interval`: 自动刷新间隔（秒），最小值 10
+
+## 其他文档
+
+更多技术文档请参考 [docs](docs/) 目录。
 
 ## License
 

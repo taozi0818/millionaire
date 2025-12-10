@@ -8,10 +8,13 @@
     "global-shortcut:allow-register",
     "global-shortcut:allow-unregister",
     "positioner:default",
+    "store:default",
     {
       "identifier": "http:default",
       "allow": [
         { "url": "https://push2.eastmoney.com/**" },
+        { "url": "https://push2his.eastmoney.com/**" },
+        { "url": "https://anonflow2.eastmoney.com/**" },
         { "url": "https://smartbox.gtimg.cn/**" }
       ]
     }
